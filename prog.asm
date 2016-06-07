@@ -86,7 +86,7 @@ buffer:		resb 1024		;READING BUFFER
 message:	resb 1024		;MESSAGE TO MERGE.
 lmessage:	resw 1			;MESSAGE LENGTH
 binMessage:	resb 1024
-lbinMessage:	resw 1
+lbinMessage:	resb 16
 stat:		resb sizeof(STAT)
 Org_Break:	resd 1
 TempBuf:	resd 1
@@ -146,49 +146,118 @@ restoreStrlen:
 	
 	%endmacro
 
-	%macro messageToBits 0	;%1 = MESSAGE
+	%macro messageToBits 1	;%1 = MESSAGE
 	;; MSG NEEDS TO BE STORES IN EBX.
+
+	mov ebx,%1
+	
+	xor ecx,ecx
 	xor eax,eax
 	xor edi,edi		;WILL BE OUR INNER LOOP COUNTER.
 	xor esi,esi		;WILL BE OUR RESULT.
-	
-.byteByByte:
-	mov eax, byte[ebx]
+_byteByByte:
+	movzx eax, byte[ebx]
 	cmp eax,0
-	jz .exit
+	je _exit
 	
-.toBinary:	
-	cmp eax,0
-	je .end
+_toBinary:
+	xor edx,edx
+	cmp eax,1
+	je _endToBinary
 	
 	mov ebx,2
 	div ebx 		;DIVIDE THE RESULT OF EAX BY THE VAUE OF EBX(2).
 
 	mov eax,edx
 	
-	cmp eax,'0'		;THE RESULT OF THE DIVISION IS STORE IN EDX.
-	je .addZero
+	cmp eax,0		;THE RESULT OF THE DIVISION IS STORE IN EDX.
+	je _addZero
 
-	push eax
+_addOne:
 	mov eax,'1'
-	mov [binMessage + ecx], eax
-	pop eax
-
-	jmp .toBinary
-	
-.addZero:
 	push eax
-	mov eax,0
-	mov [binMessage + ecx], eax
-	pop eax
-	jmp .toBinary
-.end:	
 
+	jmp _toBinary
+	
+_addZero:
+	mov eax,'0'
+	push eax
+	
+	jmp _toBinary
+_endToBinary:
+	mov eax,'1'
+	push eax
+
+	cmp byte[ebx], 128
+	jge _finishConcat
+
+	cmp byte[ebx],64
+	jge _concatOne
+
+	cmp byte[ebx],32
+	jl _concatThree
+	jmp _concatTwo
+_concatOne:
+	mov eax,'0'
+	push eax
+	jmp _finishConcat
+_concatTwo:	
+	mov eax,'0'
+	push eax
+	mov eax,'0'
+	push eax
+	jmp _finishConcat
+_concatThree:
+	mov eax,'0'
+	push eax
+	mov eax,'0'
+	push eax
+	mov eax,'0'
+	push eax
+	jmp _finishConcat
+_finishConcat:
+	pop eax
+	mov [binMessage + ecx], eax
+	inc ecx
+
+	pop eax
+	mov [binMessage + ecx], eax
+	inc ecx
+
+	pop eax
+	mov [binMessage + ecx], eax
+	inc ecx
+
+	pop eax
+	mov [binMessage + ecx], eax
+	inc ecx
+
+	pop eax
+	mov [binMessage + ecx], eax
+	inc ecx
+
+	pop eax
+	mov [binMessage + ecx], eax
+	inc ecx
+
+	pop eax
+	mov [binMessage + ecx], eax
+	inc ecx
+
+	pop eax
+	mov [binMessage + ecx], eax
+	inc ecx
+	
 	inc ebx
-	jmp .byteByByte
+	jmp _byteByByte
 	
-.exit:	
-	
+_exit:	
+	mov byte[binMessage + ecx], byte 10
+
+	mov ebx, [lmessage]
+	mov eax,8
+	mul ebx
+	mov [lbinMessage],eax
 	%endmacro
 	
 	section .text		;AKA CODE
@@ -253,11 +322,11 @@ exe:
 
 	pop ebx
 	mov [message],ebx
-
-	messageToBits
 	
 	strlen [message]
 	mov [lmessage],eax
+
+	messageToBits [message]
 	
 	pop ebx			;FIRST USEFUL PARAMETER. '-F'
 	mov [par1], ebx
