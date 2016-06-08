@@ -19,7 +19,9 @@
 	stdout equ 1
 	stderr equ 2
 
-	struc STAT
+	EOL equ 10
+
+struc STAT
 	.st_dev: 	resd 1
 	.st_ino: 	resd 1
 	.st_mode:       resw 1
@@ -38,7 +40,7 @@
 	.st_ctime_nsec: resd 1
 	.unused4:       resd 1
 	.unused5:       resd 1 
-	endstruc
+endstruc
 	
 	section .data 		;AKA CONSTANTS
 serr1	db 'Error: No parameters given to the program.',10 
@@ -63,58 +65,242 @@ outCom	db '-o'
 loutCom equ $-outCom
 needHelp db 'Need help? Use -h for more info on how to run the program.',10
 lneedHelp equ $-needHelp
+serrad db 'ACCESS DENIED',10
+slerrad equ $-serrad
 null	equ 0x00
-lbuffer dw 1024			;Size of our buffer
 test:	db 'oli.txt',0
 ltest equ $-test
 szFile:	db "TEST",0
 File_Len equ $-szFile
 fileDes dd 0
+fileDesIN dd 0
 debug db 'CAAATTDDOOOGG!',10
 ldebug equ $-debug
-
+	
 	%define sizeof(x) x %+ _size
 	
-	section .bss			;AKA VARIABLES
-par1:		resb 1			;VARIABLE FOR PARAMETER 1
-par2:		resb 1			;VARIABLE FOR PARAMETER 2
-lpar2:		resb 1
-par3:		resb 1			;VARIABLE FOR PARAMETER 3
-par4:		resb 1			;VARIABLE FOR PARAMETER 4
-lpar4:		resb 1
-buffer:		resb 1024		;READING BUFFER
-message:	resb 1024		;MESSAGE TO MERGE.
-lmessage:	resw 1			;MESSAGE LENGTH
-binMessage:	resb 1024
-lbinMessage:	resb 16
-stat:		resb sizeof(STAT)
-Org_Break:	resd 1
-TempBuf:	resd 1
-lTempBuf:	resd 1
+section .bss			;AKA VARIABLES
+	par1		resb 1			;VARIABLE FOR PARAMETER 1
+	par2		resw 2			;VARIABLE FOR PARAMETER 2
+	par3		resb 1			;VARIABLE FOR PARAMETER 3
+	par4		resw 2			;VARIABLE FOR PARAMETER 4
 	
-	%macro esteganografia 3	;ENCRYPT. %1 = MESSAGE, %2 = IMG; %3 = SIZE IMG
-	mov eax,%1
-	mov ebx,%2
-	mov ecx,%3
+	message		resb 1024		;MESSAGE TO MERGE.
+	lmessage	resb 16			;MESSAGE LENGTH
 
+	binMessage	resb 1024
+	lbinMessage	resb 16
+
+	stat		resb sizeof(STAT)
+	Org_Break	resd 1
+	formatSize	resb 16
+
+	TempBuf:	resb 5242880
+	lTempBuf	resb 1024
+
+	%macro esteganografia 0
 	
+	mov ecx,TempBuf		;THE IMAGE IN MEMORY
+	
+	mov ebx,0
+	mov edx,0
+	
+	jmp _readLine
+	;; FIRST WE GOTTA JUMP AWAY FROM THE HEADER, A.K.A THE FIRST 3 LINES.
+_readLine:
+	cmp BYTE[ecx],EOL
+	debug
+	je _eol
+	inc ebx			;COUNT ELEMENTS IN ROW (COLUMNS)
+	inc ecx			;SHIFT
+	
+	jmp _readLine
+_eol:
+	inc edx			;COUNT ELEMENTS IN A COLUMN (ROWS)
+	cmp edx,3		;WE NEED TO IGNORE 3 ROWS
+	je _eoh
+	inc ecx
+	inc ebx
+	jmp _readLine
+_eoh:				;END OF THE HEADER, :D
+	inc ebx
+	mov [formatSize],ebx
+_encrypt:
+	mov ecx,[lbinMessage]
+	xor edi,edi
+	xor esi,esi
+	add esi, [formatSize]
+_cycleThroughImage:
+	movzx eax, byte[TempBuf + esi] ;POSITION OF THE BYTE TO MODIFY AS A WORD.
+	mov ebx,2
+	mov edx,0
+	div ebx
+	
+	cmp edx,1		;COMPARE THE RESULT OF THE DIVISION WITH 0
+	je _LSBOne
+	jmp _LSBZero
+
+_LSBOne:
+	cmp byte[binMessage + edi],'1'
+	je _done
+	and byte[TempBuf + esi],254
+
+	jmp _done
+
+_LSBZero:
+	cmp byte[binMessage + edi],'0'
+	je _done
+	or byte[TempBuf + esi],1
+
+	jmp _done
+
+_done:
+	inc esi
+	inc edi
+	dec ecx
+
+	jz _write
+
+	jmp _cycleThroughImage
+_write:	
+	%endmacro
+
+	%macro messageToBits 1	;%1 = MESSAGE
+;;;  MSG NEEDS TO BE STORES IN EBX.
+	mov esi,%1
+
+	xor ecx,ecx
+_nextChar:
+	movzx eax, byte[esi]
+	cmp eax, 0
+	je _end
+
+_divide:
+	mov edx, 0
+	cmp eax, 1
+	je  _endDivide
+	mov ebx, 2
+	div ebx
+	cmp edx, 0
+	je  _addZero
+	jmp _addOne
+
+_addZero:
+	mov edi, '0'
+	push edi
+	jmp _divide
+
+_addOne:
+	mov edi, '1'
+	push edi
+	jmp _divide
+
+_endDivide:
+	mov edi, '1'
+	push edi
+
+	cmp byte[esi], 127
+	jg _endChar
+	cmp byte[esi], 64
+	jge _concatOne
+	cmp byte[esi], 32
+	jl _concatThree
+	jmp _concatTwo
+
+_concatOne:
+	mov edi, '0'
+	push edi
+
+	jmp _endChar
+
+_concatTwo:
+	mov edi, '0'
+	push edi
+	mov edi, '0'
+	push edi
+
+	jmp _endChar
+
+_concatThree:
+	mov edi, '0'
+	push edi
+	mov edi, '0'
+	push edi
+	mov edi, '0'
+	push edi
+
+	jmp _endChar
+
+_endChar:
+	pop edi
+	mov [binMessage + ecx], edi
+	inc ecx
+
+	pop edi
+	mov [binMessage + ecx], edi
+	inc ecx
+
+	pop edi
+	mov [binMessage + ecx], edi
+	inc ecx
+
+	pop edi
+	mov [binMessage + ecx], edi
+	inc ecx
+
+	pop edi
+	mov [binMessage + ecx], edi
+	inc ecx
+
+	pop edi
+	mov [binMessage + ecx], edi
+	inc ecx
+
+	pop edi
+	mov [binMessage + ecx], edi
+	inc ecx
+
+	pop edi
+	mov [binMessage + ecx], edi
+	inc ecx
+
+	inc esi
+	jmp _nextChar
+
+_end:
+	mov byte [binMessage + ecx], byte 10
+
+	mov ebx, [lmessage]
+	mov eax, 8
+	mul ebx
+	mov [lbinMessage], eax
 	%endmacro
 	
 	%macro writeC 2		;WRITE TO CONSOLE, %1 = STRING, %2 = STRING LENGTH
+	push eax
+	push ebx
+	push ecx
+	push edx
+	
 	mov eax,sys_write
 	mov ebx,stdout
 	mov ecx,%1
 	mov edx,%2
 	int sys_call
+	
+	pop edx
+	pop ecx
+	pop ebx
+	pop eax
 	%endmacro
 
 	%macro debug 0
 	writeC debug, ldebug
 	%endmacro
-	
+
 	%macro cmpstr 3		;COMPARE 2 STRINGS, %1 = STRING 1, %2 = STRING 2, %3 = NUMBER OF ASCII CHARACTERS TO COMPARE.
 	push ecx
-	
+
 	cld			;SCAN FORWARD (LEFT TO RIGHT)
 	mov ecx,%3		;SCAN %3 CHARACTERS
 	mov esi,%1		;STRING 1
@@ -145,120 +331,6 @@ restoreStrlen:
 	;; NOTE: THE VALUE OF EAX WILL REMAIN IN THE STACK IF NEEDED.
 	
 	%endmacro
-
-	%macro messageToBits 1	;%1 = MESSAGE
-	;; MSG NEEDS TO BE STORES IN EBX.
-
-	mov ebx,%1
-	
-	xor ecx,ecx
-	xor eax,eax
-	xor edi,edi		;WILL BE OUR INNER LOOP COUNTER.
-	xor esi,esi		;WILL BE OUR RESULT.
-_byteByByte:
-	movzx eax, byte[ebx]
-	cmp eax,0
-	je _exit
-	
-_toBinary:
-	xor edx,edx
-	cmp eax,1
-	je _endToBinary
-	
-	mov ebx,2
-	div ebx 		;DIVIDE THE RESULT OF EAX BY THE VAUE OF EBX(2).
-
-	mov eax,edx
-	
-	cmp eax,0		;THE RESULT OF THE DIVISION IS STORE IN EDX.
-	je _addZero
-
-_addOne:
-	mov eax,'1'
-	push eax
-
-	jmp _toBinary
-	
-_addZero:
-	mov eax,'0'
-	push eax
-	
-	jmp _toBinary
-_endToBinary:
-	mov eax,'1'
-	push eax
-
-	cmp byte[ebx], 128
-	jge _finishConcat
-
-	cmp byte[ebx],64
-	jge _concatOne
-
-	cmp byte[ebx],32
-	jl _concatThree
-	jmp _concatTwo
-_concatOne:
-	mov eax,'0'
-	push eax
-	jmp _finishConcat
-_concatTwo:	
-	mov eax,'0'
-	push eax
-	mov eax,'0'
-	push eax
-	jmp _finishConcat
-_concatThree:
-	mov eax,'0'
-	push eax
-	mov eax,'0'
-	push eax
-	mov eax,'0'
-	push eax
-	jmp _finishConcat
-_finishConcat:
-	pop eax
-	mov [binMessage + ecx], eax
-	inc ecx
-
-	pop eax
-	mov [binMessage + ecx], eax
-	inc ecx
-
-	pop eax
-	mov [binMessage + ecx], eax
-	inc ecx
-
-	pop eax
-	mov [binMessage + ecx], eax
-	inc ecx
-
-	pop eax
-	mov [binMessage + ecx], eax
-	inc ecx
-
-	pop eax
-	mov [binMessage + ecx], eax
-	inc ecx
-
-	pop eax
-	mov [binMessage + ecx], eax
-	inc ecx
-
-	pop eax
-	mov [binMessage + ecx], eax
-	inc ecx
-	
-	inc ebx
-	jmp _byteByByte
-	
-_exit:	
-	mov byte[binMessage + ecx], byte 10
-
-	mov ebx, [lmessage]
-	mov eax,8
-	mul ebx
-	mov [lbinMessage],eax
-	%endmacro
 	
 	section .text		;AKA CODE
 	global _start
@@ -266,8 +338,8 @@ _exit:
 _start:	
 	;; START BY CAPTURING PARAMETERS. YAYY...
 
-	POP EAX				;OUR ARGC
-	POP EBX				;THE PROGRAM NAME, CAN BE OVERWRITTEN LATER AS IT IS NOT NEEDED
+	pop eax				;OUR ARGC
+	pop ebx				;THE PROGRAM NAME, CAN BE OVERWRITTEN LATER AS IT IS NOT NEEDED
 	
 	;; START IF 1
 	CMP EAX,1			;CHECK IF THERE IS THERE IS NO PARAMETERS TO READ. 
@@ -325,16 +397,24 @@ exe:
 	
 	strlen [message]
 	mov [lmessage],eax
-
-	messageToBits [message]
 	
 	pop ebx			;FIRST USEFUL PARAMETER. '-F'
 	mov [par1], ebx
 	;; CHECK FOR -F; IF SO, NEXT PARAMETER IS A FILE.
 	cmpstr fileCom,[par1],2
 	jne err2		;IF NOT, GO TO ERR2
+	
 	pop ebx			;SECOND USEFUL PARAMETER. [FILE]
 	mov [par2], ebx
+
+	;; ~ Get file size
+	mov eax, sys_newstat
+	mov ebx, [par2]
+	mov ecx, stat
+	int 80H
+
+	mov eax,dword [stat + STAT.st_size]
+	mov [lTempBuf], eax
 
 	;; CHECK FOR -O
 	pop ebx			;THIRD USEFUL PARAMETER. '-O'
@@ -346,57 +426,46 @@ exe:
 
 	pop ebx			;FORTH USEFUL PARAMETER. [FILE]
 	mov [par4], ebx
+	
+	;;  OPEN FILE
+	mov eax, sys_open
+	mov ebx, [par2]
+	mov ecx, 0		;READ ONLY
+	int sys_call
+
+	test eax,eax
+	js accessd
+	
+	mov [fileDesIN],eax
+	
+	;;  READ
+	mov eax, sys_read
+	mov ebx,[fileDesIN]
+	mov ecx, TempBuf
+	mov edx, lTempBuf
+	int sys_call
+	
+	js accessd
+	;;  CLOSE
+	mov eax, sys_close
+	mov ebx, [fileDesIN]
+	int sys_call
 
 	;;  CREATE
 	mov eax,sys_create	;SYS_CREATE
 	mov ebx, [par4]		;PASS OUTPUT FILENAME
-	mov ecx,511		;ALL ACCESS RIGHTS
+	mov ecx,6440		;CHMOD
 	int sys_call
 
 	mov [fileDes], eax
-	
-	;; ~ Get file size
-	mov		ebx, szFile
-	mov		ecx, stat
-	mov		eax, sys_newstat
-	int		80H
 
-	mov eax,dword [stat + STAT.st_size]
-	mov [lTempBuf], eax
-	
-	;; ~ Get end of bss section
-	xor		ebx, ebx
-	mov		eax, sys_brk
-	int		80H
-	mov	[Org_Break], eax
-	mov	[TempBuf], eax
-	push	eax
+	messageToBits [message]
+	esteganografia
 
-	;;  extend it by file size
-	pop		ebx
-	add		ebx, dword [stat + STAT.st_size]
-	mov		eax, sys_brk
-	int		80H
-
-	;;  open file
-	mov		ebx, szFile
-	mov		ecx, O_RDONLY
-	xor		edx, edx
-	mov		eax, sys_open
-	int		80H
-	xchg    	eax, esi
-
-	;;  READ
-	mov     ebx, esi
-	mov		ecx, [TempBuf]
-	mov		edx, dword [stat + STAT.st_size]
-	mov		eax, sys_read
-	int		80H
-	
 	;; WRITE
-	mov eax, 4
+	mov eax, sys_write
 	mov ebx, [fileDes]
-	mov ecx, [TempBuf]
+	mov ecx, TempBuf
 	mov edx, [lTempBuf]
 	int sys_call
 
@@ -405,26 +474,6 @@ exe:
 	mov ebx,[fileDes]
 	int sys_call
 	
-	;; PRINT TO TERMINAL
-	mov ebx, stdout
-	mov ecx, [TempBuf]
-	mov edx, dword [stat + STAT.st_size]
-	mov eax, sys_write
-	int sys_call
-
-	push edx
-	
-	;;  close file
-	mov		ebx, esi
-	mov		eax, sys_close
-	int		80H
-	
-	;;  "free" memory
-	mov     ebx, [Org_Break]
-	mov     eax, sys_brk
-	int     80H
-	
-
 	jmp end	
 err2:
 	;; Print deb.
@@ -433,7 +482,7 @@ err2:
 	jmp end
 
 accessd:
-	writeC debug, ldebug	;ACCESS DENIED TO FILE.
+	writeC serrad, slerrad	;ACCESS DENIED TO FILE.
 	
 	jmp end
 end:	
