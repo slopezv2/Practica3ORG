@@ -49,9 +49,11 @@ serr2	db 'Error: Parameters do no match with standard.',10
 slerr2	equ $-serr2
 sutilerr db 'Error: Command undefined',10 
 slutilerr equ $-sutilerr
-shelp	db 'Help here', 10	
+shelpTitle db '               ---HELP---               ',10
+slhelpTitle equ $-shelpTitle
+shelp	db 'Syntax: ./hidemsg "message" -f [FILENAME] -o [FILENAME]', 10	
 slhelp	equ $-shelp
-sversion db 'VERSION 0.1', 10
+sversion db 'VERSION 1.0', 10
 slversion equ $-sversion
 sautor	db 'By: Juan Manuel Mejía B., Sebastian Lopez V. & Camilo Zuluaga V.', 10
 slautor equ $-sautor
@@ -67,11 +69,6 @@ needHelp db 'Need help? Use -h for more info on how to run the program.',10
 lneedHelp equ $-needHelp
 serrad db 'ACCESS DENIED',10
 slerrad equ $-serrad
-null	equ 0x00
-test:	db 'oli.txt',0
-ltest equ $-test
-szFile:	db "TEST",0
-File_Len equ $-szFile
 fileDes dd 0
 fileDesIN dd 0
 debug db 'CAAATTDDOOOGG!',10
@@ -102,119 +99,118 @@ section .bss			;AKA VARIABLES
 	
 	mov ecx,TempBuf		;THE IMAGE IN MEMORY
 	
-	mov ebx,0
-	mov edx,0
+	mov ebx,0		;WE WILL USE THIS TO FIND THE SIZE OF THE NOT USEFUL PART OF THE IMAGE.
+	mov edx,0		;WE WILL USE THIS TO COUNT THE NUMBER OF LINES WE READ.
 	
-	jmp _readLine
 	;; FIRST WE GOTTA JUMP AWAY FROM THE HEADER, A.K.A THE FIRST 3 LINES.
 _readLine:
-	cmp BYTE[ecx],EOL
-	debug
-	je _eol
+	cmp BYTE[ecx],EOL	;COMPARE CURRENT CHAR WITH END OF LINE AKA 10.
+	je _eol			;JUMP IF EQUAL TO EOL
 	inc ebx			;COUNT ELEMENTS IN ROW (COLUMNS)
 	inc ecx			;SHIFT
 	
-	jmp _readLine
+	jmp _readLine		;LOOP
 _eol:
 	inc edx			;COUNT ELEMENTS IN A COLUMN (ROWS)
 	cmp edx,3		;WE NEED TO IGNORE 3 ROWS
-	je _eoh
+	je _eoh			;WE FINISH READING THE USELESS PART OF THE FILE
 	inc ecx
 	inc ebx
 	jmp _readLine
 _eoh:				;END OF THE HEADER, :D
-	inc ebx
-	mov [formatSize],ebx
+	inc ebx			;ADD LAST EOL
+	mov [formatSize],ebx	;MOVE THIS TO FORMAT SIZE
 _encrypt:
-	mov ecx,[lbinMessage]
-	xor edi,edi
-	xor esi,esi
-	add esi, [formatSize]
+	mov ecx,[lbinMessage]	;GET THE MESSAGE AS BITS
+	xor edi,edi		;SET EDI = 0
+	xor esi,esi		;SET ESI = 0
+	add esi, [formatSize]	;ESI, AKA THE POINTER TO THE USEFUL PART OF THE IMAGE IN MEMORY.
 _cycleThroughImage:
 	movzx eax, byte[TempBuf + esi] ;POSITION OF THE BYTE TO MODIFY AS A WORD.
 	mov ebx,2
-	mov edx,0
-	div ebx
+	mov edx,0		;WE NEED TO CLEAN EDX SINCE IT WILL STORE THE RESULT THERE.
+	div ebx			;DIVIDE THE CONTENT OF EAX BY 2.
 	
 	cmp edx,1		;COMPARE THE RESULT OF THE DIVISION WITH 0
-	je _LSBOne
-	jmp _LSBZero
+	je _LSBOne		;LESS SIGNIFICANT BIT = 1
+	jmp _LSBZero		;LESS SIGNIFICANT BIT = 0
 
 _LSBOne:
-	cmp byte[binMessage + edi],'1'
+	cmp byte[binMessage + edi],'1' 	;IF THE MESSAGE AS BITS IS 1, THEN GO TO DONE, ELSE
 	je _done
-	and byte[TempBuf + esi],254
+	and byte[TempBuf + esi],254	;AN AND BETWEEN THE BYTE OF THE IMAGE AT ESI AND 11111110
 
 	jmp _done
 
 _LSBZero:
-	cmp byte[binMessage + edi],'0'
+	cmp byte[binMessage + edi],'0' 	;IF THE MESSAGE AS BITS IS 1, THEN GO TO DONE, ELSE
 	je _done
-	or byte[TempBuf + esi],1
+	or byte[TempBuf + esi],1 	;AN OR BETWEEN THE BYTE OF THE IMAGE AT ESI AND 00000001
 
 	jmp _done
 
 _done:
-	inc esi
-	inc edi
-	dec ecx
+	inc esi			;ESI ++
+	inc edi			;EDI ++
+	dec ecx			;ONE BIT LESS TO WRITE
 
-	jz _write
+	jz _write		;FINISH THE PROCESS, GO TO WRITE TO FILE.
 
-	jmp _cycleThroughImage
-_write:	
+	jmp _cycleThroughImage	;CONTINUE LOOPING AROUND N STUFF.
+_write:
 	%endmacro
 
 	%macro messageToBits 1	;%1 = MESSAGE
-;;;  MSG NEEDS TO BE STORES IN EBX.
-	mov esi,%1
+	
+	mov esi,%1		;MOVE THE MESSAGE TO ESI
 
-	xor ecx,ecx
+	xor ecx,ecx		;SET ECX = 0
 _nextChar:
-	movzx eax, byte[esi]
-	cmp eax, 0
-	je _end
+	movzx eax, byte[esi]	;MOVE TO EAX THE BYTE AT ESI
+	cmp eax, 0		;CHECK IF EAX = 0, ASCII REPRESENTATION FOR NULL/EOF.
+	je _end			
 
 _divide:
-	mov edx, 0
-	cmp eax, 1
+	;; PRETTY MUCH THE SAME PROCESS AS MOVING FROM DECIMAL TO BINARY.
+	xor edx, edx		;CLEAN EDX
+	cmp eax, 1		
 	je  _endDivide
 	mov ebx, 2
-	div ebx
-	cmp edx, 0
+	div ebx			;DIVIDE EAX, AKA OUR BYTE IN ASCII, BY 2.
+	cmp edx, 0		;IF EDX = 0, THE REMAINDER OF THE DIVISION WAS 0, ELSE IT WAS 1.
 	je  _addZero
 	jmp _addOne
 
 _addZero:
 	mov edi, '0'
-	push edi
+	push edi		;PUSH A '0' TO THE STACK. NOTE IT IS AN ASCII CHARACTER
 	jmp _divide
 
 _addOne:
 	mov edi, '1'
-	push edi
+	push edi		;PUSH A '1' TO THE STACK. NOTE IT IS AN ASCII CHARACTER
 	jmp _divide
 
 _endDivide:
-	mov edi, '1'
+	mov edi, '1'		;PUSH THE LAST '1' TO THE STACK.
 	push edi
 
-	cmp byte[esi], 127
+	cmp byte[esi], 127	;IF THE ASCII CHARACTER > 127, THAT MEANS IT HAS THE FOLLOWING FORMAT : 1XXXXXXX
 	jg _endChar
-	cmp byte[esi], 64
+	cmp byte[esi], 64	;IF THE ASCII CHARACTER > 64, THAT MEANS IT HAS THE FOLLOWING FORMAT : 01XXXXXX
 	jge _concatOne
-	cmp byte[esi], 32
-	jl _concatThree
+	cmp byte[esi], 32	;IF THE ASCII CHARACTER > 32, THAT MEANS IT HAS THE FOLLOWING FORMAT : 001XXXXX
+	jl _concatThree		;ELSE GO TO THE FORMAT 0001XXXX, WE DONT GET ANY CHARACTERS BELLOW THAT POINT.
 	jmp _concatTwo
 
 _concatOne:
-	mov edi, '0'
+	mov edi, '0'		;PUSH 1 '0' TO THE STACK
 	push edi
 
 	jmp _endChar
 
 _concatTwo:
-	mov edi, '0'
+	mov edi, '0'		;PUSH 2 '0' TO THE STACK
 	push edi
 	mov edi, '0'
 	push edi
@@ -222,7 +218,7 @@ _concatTwo:
 	jmp _endChar
 
 _concatThree:
-	mov edi, '0'
+	mov edi, '0'		;PUSH 3 '0' TO THE STACK
 	push edi
 	mov edi, '0'
 	push edi
@@ -232,6 +228,7 @@ _concatThree:
 	jmp _endChar
 
 _endChar:
+	;; STORE IN BIN MESSAGE THE BYTE AS BITS. IT WILL OCCUPY 8 BYTES AS EACH BIT IS REPRESENTED AS AN ASCII CHAR.
 	pop edi
 	mov [binMessage + ecx], edi
 	inc ecx
@@ -264,12 +261,13 @@ _endChar:
 	mov [binMessage + ecx], edi
 	inc ecx
 
-	inc esi
+	inc esi			;NEXT BYTE/ASCII CHARACTER.
 	jmp _nextChar
 
 _end:
-	mov byte [binMessage + ecx], byte 10
+	mov byte [binMessage + ecx], byte 10 ;CONCAT EOL
 
+	;; CALC THE SIZE OF BINMESSAGE. IT IS THE NORMAL SIZE OF MESSAGE * 8.
 	mov ebx, [lmessage]
 	mov eax, 8
 	mul ebx
@@ -277,10 +275,10 @@ _end:
 	%endmacro
 	
 	%macro writeC 2		;WRITE TO CONSOLE, %1 = STRING, %2 = STRING LENGTH
-	push eax
-	push ebx
-	push ecx
-	push edx
+	push eax		;STORE FOR A RAINY DAY
+	push ebx		;STORE FOR A RAINY DAY
+	push ecx		;STORE FOR A RAINY DAY
+	push edx		;STORE FOR A RAINY DAY
 	
 	mov eax,sys_write
 	mov ebx,stdout
@@ -288,14 +286,14 @@ _end:
 	mov edx,%2
 	int sys_call
 	
-	pop edx
+	pop edx			;RECOVER THE VALUES.
 	pop ecx
 	pop ebx
 	pop eax
 	%endmacro
 
 	%macro debug 0
-	writeC debug, ldebug
+	writeC debug, ldebug	;SIMPLE MACRO THAT HELPS DEBUG STUFF.
 	%endmacro
 
 	%macro cmpstr 3		;COMPARE 2 STRINGS, %1 = STRING 1, %2 = STRING 2, %3 = NUMBER OF ASCII CHARACTERS TO COMPARE.
@@ -354,14 +352,14 @@ _start:
 
 	JMP end
 err1:
-	;; PRINT DEB.
+	;; PRINT ERR1
 	writeC serr1,slerr1
 	
 	jmp end
 
 util:
-	POP EAX
-	MOV [par1],EAX
+	POP EAX			;POP PARAMETER OUT OF THE STACK
+	MOV [par1],EAX		;STORE IT IN OUR BSS VARIABLE.
 	
 	cmpstr helpCom,[par1],2
 	jne notEqu		;IF NOT, CHECK IF -V
@@ -379,6 +377,7 @@ notEqu1:
 	jmp end
 
 help:
+	writeC shelpTitle,slhelpTitle 
 	writeC shelp,slhelp	;DISPLAY HELP MESSAGE
 	
 	jmp end
@@ -392,14 +391,14 @@ exe:
 
 	;; NOTE: DO TO DERPS, I FORGOT TO READ THE MESSAGE FIRST. IT IS ANOTHER PARAMETER. Message needs to get the "" removed.
 
-	pop ebx
-	mov [message],ebx
+	pop ebx			;POP MESSAGE OUT OF THE STACK
+	mov [message],ebx	;STORE MESSAGE
 	
-	strlen [message]
-	mov [lmessage],eax
+	strlen [message]	;CALC. MESSAGE SIZE
+	mov [lmessage],eax	;STORE THAT VALUE
 	
 	pop ebx			;FIRST USEFUL PARAMETER. '-F'
-	mov [par1], ebx
+	mov [par1], ebx		
 	;; CHECK FOR -F; IF SO, NEXT PARAMETER IS A FILE.
 	cmpstr fileCom,[par1],2
 	jne err2		;IF NOT, GO TO ERR2
@@ -407,7 +406,7 @@ exe:
 	pop ebx			;SECOND USEFUL PARAMETER. [FILE]
 	mov [par2], ebx
 
-	;; ~ Get file size
+	;; GET FILE SIZE
 	mov eax, sys_newstat
 	mov ebx, [par2]
 	mov ecx, stat
